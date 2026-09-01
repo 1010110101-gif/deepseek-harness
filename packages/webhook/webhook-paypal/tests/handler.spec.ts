@@ -11,9 +11,9 @@ describe('PayPal webhook handler', () => {
   const mockCert = 'test-paypal-cert'
   const mockSource = 'primary-paypal'
 
-  let mockCtx: Context
-  let mockRequest: unknown
-  let mockResponse: unknown
+  let mockCtx: { credentials: unknown; webhookRuntime: unknown; logger: unknown }
+  let mockRequest: { method: string; headers: unknown; complete: boolean; [Symbol.asyncIterator]: unknown }
+  let mockResponse: { writeHead: unknown; end: unknown; setHeader: unknown }
   let handler: unknown
 
   beforeEach(() => {
@@ -52,7 +52,7 @@ describe('PayPal webhook handler', () => {
       maxBodyBytes: 65536,
     }
 
-    handler = createPayPalWebhookHandler(mockCtx, config)
+    handler = createPayPalWebhookHandler(mockCtx as unknown as Context, config)
   })
 
   it('rejects non-POST requests', async () => {
