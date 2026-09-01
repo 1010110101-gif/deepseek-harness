@@ -2,6 +2,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import * as crypto from 'node:crypto'
+import type { Context } from '@deepseek-ai/cordis'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { createPayPalWebhookHandler } from '../src/handler.ts'
 import type { PayPalWebhookHandlerConfig } from '../src/handler.ts'
@@ -10,7 +11,7 @@ describe('PayPal webhook handler', () => {
   const mockCert = 'test-paypal-cert'
   const mockSource = 'primary-paypal'
 
-  let mockCtx: unknown
+  let mockCtx: Context
   let mockRequest: unknown
   let mockResponse: unknown
   let handler: unknown

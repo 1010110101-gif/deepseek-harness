@@ -1,6 +1,7 @@
 /** Unit tests for PayPal webhook adapter invariant companion. */
 
 import { describe, it, expect, vi } from 'vitest'
+import type { Context } from '@deepseek-ai/cordis'
 import { name, inject, apply } from '../src/invariant.ts'
 
 describe('webhook-paypal invariant companion', () => {
@@ -16,7 +17,7 @@ describe('webhook-paypal invariant companion', () => {
       },
     }
 
-    const disposer = await apply(mockCtx as unknown)
+    const disposer = await apply(mockCtx as unknown as Context)
 
     expect(mockCtx.invariants.register).toHaveBeenCalledWith(
       '@deepseek-ai/dsh-webhook-paypal',
