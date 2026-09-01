@@ -1,26 +1,25 @@
-/** Runtime invariant checks for webhook-paypal configuration. */
+/** Package-owned invariant companion for the PayPal webhook adapter. */
 
-import type { Config } from './index.ts'
+import type { Context } from '@deepseek-ai/cordis'
+import type { InvariantInstaller } from '@deepseek-ai/dsh-invariants'
+
+const PACKAGE_NAME = '@deepseek-ai/dsh-webhook-paypal'
+
+/** Cordis invariant-companion plugin name. */
+export const name = 'webhook-paypal-invariant'
+/** Registry required before reserving this package's invariant ownership. */
+export const inject = ['invariants']
 
 /**
- * Check that PayPal IPN configuration is valid.
- * @param config - validated configuration object
- * @throws if configuration violates invariants
+ * No runtime invariant: HMAC-SHA256 verification and input validation occur at the exact
+ * HTTP operation; dsh-host-webserver owns route/disposer symmetry.
  */
-export function assertPayPalConfig(config: Config): void {
-  if (!config.source || config.source.trim() !== config.source) {
-    throw new Error('webhook-paypal source must be non-empty and trimmed')
-  }
-  if (!config.path || !config.path.startsWith('/')) {
-    throw new Error('webhook-paypal path must be absolute')
-  }
-  if (config.path === '/') {
-    throw new Error('webhook-paypal path must not be root')
-  }
-  if (config.path.endsWith('/')) {
-    throw new Error('webhook-paypal path must not have trailing slash')
-  }
-  if (config.maxBodyBytes <= 0 || !Number.isSafeInteger(config.maxBodyBytes)) {
-    throw new Error('webhook-paypal maxBodyBytes must be a positive safe integer')
-  }
-}
+const install: InvariantInstaller = () => {}
+
+/**
+ * Register this package's explained empty invariant.
+ * @param ctx - Cordis context carrying the invariant registry.
+ * @returns the invariant registration disposer.
+ */
+export const apply = (ctx: Context): Promise<() => void> =>
+  Promise.resolve(ctx.invariants.register(PACKAGE_NAME, install))

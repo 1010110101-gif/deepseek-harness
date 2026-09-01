@@ -1,7 +1,7 @@
 /** PayPal IPN HTTP authentication, parsing, and fire-and-forget dispatch. */
 
 import type { Context } from '@deepseek-ai/cordis'
-import type { IncomingMessage, ServerResponse } from 'node:http'
+import type { ServerResponse } from 'node:http'
 import * as crypto from 'node:crypto'
 import type { CredentialRef } from '@deepseek-ai/dsh-credentials'
 import { snapshotJsonValue } from '@deepseek-ai/dsh-session'
@@ -19,16 +19,6 @@ export interface PayPalWebhookHandlerConfig {
   readonly source: string
   readonly secretEnv: CredentialRef
   readonly maxBodyBytes: number
-}
-
-/** Require one unambiguous non-empty request header. */
-function requiredHeader(request: IncomingMessage, name: string): string {
-  const values = request.headersDistinct[name]
-  const value = values?.[0]
-  if (values?.length !== 1 || value === undefined || value.trim() === '') {
-    throw new WebhookHttpError(400, `missing ${name} header`)
-  }
-  return value
 }
 
 /** Whether Content-Type is form-encoded with optional UTF-8 charset. */
@@ -137,12 +127,13 @@ export function createPayPalWebhookHandler(
         throw new WebhookHttpError(401, 'invalid PayPal signature')
       }
       const payload = parsePayload(body)
+      const txnType = typeof payload.txn_type === 'string' ? payload.txn_type : 'unknown'
       const txnId = typeof payload.txn_id === 'string' ? payload.txn_id : `ipn-${Date.now()}`
       const delivery: VerifiedWebhookDelivery<'paypal'> = {
         kind: 'paypal',
         source: WebhookSourceId(config.source),
         deliveryId: WebhookDeliveryId(txnId),
-        event: { payload },
+        event: { name: txnType, payload },
         receivedAt: Date.now(),
       }
       try {

@@ -27,9 +27,16 @@ export type PayPalIpnPayload = Record<string, unknown> & {
   readonly custom?: string
 }
 
-/** Verified PayPal IPN delivery after HMAC-SHA256 signature verification. */
-export interface PayPalVerifiedDelivery {
-  readonly kind: 'paypal'
+/** Provider event supplied to `WebhookRule<'paypal'>`. */
+export interface PayPalWebhookEvent {
+  /** Transaction type from the IPN payload such as `web_accept` or `subscr_payment`. */
+  readonly name: string
+  /** Signed form-encoded object exactly as parsed from the request body. */
   readonly payload: PayPalIpnPayload
-  readonly receivedAt: number
+}
+
+declare module '@deepseek-ai/dsh-webhook' {
+  interface WebhookEventMap {
+    paypal: PayPalWebhookEvent
+  }
 }

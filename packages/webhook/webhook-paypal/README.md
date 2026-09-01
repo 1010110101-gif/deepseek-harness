@@ -64,11 +64,12 @@ PayPal provides an **API Signature** certificate for verifying webhooks:
 
 ### Verify webhook authenticity
 
-PayPal uses HMAC-SHA256 verification. The adapter:
+PayPal uses HMAC-SHA256 verification with alphabetically-sorted parameters. The adapter:
 1. Takes the raw form-encoded body
-2. Appends `cmd=_notify-validate`
-3. Computes HMAC-SHA256 using your API signature
-4. Verifies the signature matches the `sig` parameter in the payload
+2. Removes the `sig` parameter
+3. Sorts remaining parameters alphabetically
+4. Computes HMAC-SHA256 using your API signature
+5. Verifies the computed signature matches the `sig` parameter in the payload
 
 ## Model Experience
 
