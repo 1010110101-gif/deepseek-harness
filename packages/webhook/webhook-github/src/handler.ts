@@ -1,17 +1,20 @@
 /** GitHub HTTP authentication, parsing, and fire-and-forget dispatch. */
 
 import type { Context } from '@deepseek-ai/cordis'
-import type { IncomingMessage, ServerResponse } from 'node:http'
+import type { IncomingMessage } from 'node:http'
 import { Webhooks } from '@octokit/webhooks'
 import type { CredentialRef } from '@deepseek-ai/dsh-credentials'
 import { snapshotJsonValue } from '@deepseek-ai/dsh-session'
 import {
+  isWebhookContentType,
+  readBoundedUtf8Body,
   WebhookDeliveryId,
+  WebhookHttpError,
+  webhookRespond,
   WebhookSourceId,
   type VerifiedWebhookDelivery,
 } from '@deepseek-ai/dsh-webhook'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
-import { readBoundedUtf8Body, WebhookHttpError } from './body.ts'
 import type { GitHubJsonObject } from './types.ts'
 
 /** Handler values validated once at plugin load. */
@@ -29,27 +32,6 @@ function requiredHeader(request: IncomingMessage, name: string): string {
     throw new WebhookHttpError(400, `missing ${name} header`)
   }
   return value
-}
-
-/** Whether Content-Type names JSON with at most one UTF-8 charset parameter. */
-function isJsonContentType(value: string | undefined): boolean {
-  if (value === undefined) return false
-  const parts = value.split(';').map(part => part.trim())
-  const [mediaType, parameter, ...extra] = parts
-  if (mediaType?.toLowerCase() !== 'application/json') return false
-  if (parameter === undefined) return true
-  return extra.length === 0 && /^charset=(?:utf-8|"utf-8")$/i.test(parameter)
-}
-
-/** Send one empty or plain-text response exactly once. */
-function respond(response: ServerResponse, status: number, message?: string): void {
-  if (message === undefined) {
-    response.writeHead(status)
-    response.end()
-    return
-  }
-  response.writeHead(status, { 'content-type': 'text/plain; charset=utf-8' })
-  response.end(message)
 }
 
 /** Convert a parsed value into the adapter's generic signed-object guarantee. */
@@ -85,7 +67,7 @@ export function createGitHubWebhookHandler(
         response.setHeader('allow', 'POST')
         throw new WebhookHttpError(405, 'method not allowed')
       }
-      if (!isJsonContentType(request.headers['content-type'])) {
+      if (!isWebhookContentType(request.headers['content-type'], 'application/json')) {
         throw new WebhookHttpError(415, 'content type must be application/json')
       }
       const body = await readBoundedUtf8Body(request, config.maxBodyBytes)
@@ -117,14 +99,14 @@ export function createGitHubWebhookHandler(
         ctx.logger.warn('webhook-github: dispatch unavailable')
         throw new WebhookHttpError(503, 'webhook runtime is unavailable')
       }
-      respond(response, 202)
+      webhookRespond(response, 202)
     } catch (error: unknown) {
       if (error instanceof WebhookHttpError) {
-        respond(response, error.status, error.message)
+        webhookRespond(response, error.status, error.message)
         return
       }
       ctx.logger.warn('webhook-github: request failed')
-      respond(response, 503, 'webhook ingress is unavailable')
+      webhookRespond(response, 503, 'webhook ingress is unavailable')
     }
   }
 }

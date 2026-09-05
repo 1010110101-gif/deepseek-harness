@@ -1,6 +1,6 @@
-/** Bounded raw HTTP body intake for GitHub signature verification. */
+/** Shared HTTP body intake and response primitives for webhook provider adapters. */
 
-import type { IncomingMessage } from 'node:http'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 
 /** HTTP refusal whose message is safe to return without request data. */
 export class WebhookHttpError extends Error {
@@ -63,7 +63,28 @@ export async function readBoundedUtf8Body(
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, size))
   } catch {
-    // TextDecoder is the only statement in the try; GitHub JSON must be valid UTF-8.
+    // TextDecoder is the only statement in the try; each provider names its body format at the call site.
     throw new WebhookHttpError(400, 'request body is not valid UTF-8')
   }
+}
+
+/** Whether one Content-Type header names exactly `mediaType` with at most one UTF-8 charset parameter. */
+export function isWebhookContentType(value: string | undefined, mediaType: string): boolean {
+  if (value === undefined) return false
+  const parts = value.split(';').map(part => part.trim())
+  const [actual, parameter, ...extra] = parts
+  if (actual?.toLowerCase() !== mediaType) return false
+  if (parameter === undefined) return true
+  return extra.length === 0 && /^charset=(?:utf-8|"utf-8")$/i.test(parameter)
+}
+
+/** Send one empty or plain-text response exactly once. */
+export function webhookRespond(response: ServerResponse, status: number, message?: string): void {
+  if (message === undefined) {
+    response.writeHead(status)
+    response.end()
+    return
+  }
+  response.writeHead(status, { 'content-type': 'text/plain; charset=utf-8' })
+  response.end(message)
 }

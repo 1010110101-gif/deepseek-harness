@@ -1,14 +1,16 @@
 /** PayPal IPN HTTP verification, parsing, and fire-and-forget dispatch. */
 
 import type { Context } from '@deepseek-ai/cordis'
-import type { ServerResponse } from 'node:http'
 import {
+  isWebhookContentType,
+  readBoundedUtf8Body,
   WebhookDeliveryId,
+  WebhookHttpError,
+  webhookRespond,
   WebhookSourceId,
   type VerifiedWebhookDelivery,
 } from '@deepseek-ai/dsh-webhook'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
-import { readBoundedUtf8Body, WebhookHttpError } from './body.ts'
 import type { PayPalIpnPayload } from './types.ts'
 
 /** PayPal production `cmd=_notify-validate` endpoint; the sandbox overrides it in config. */
@@ -25,27 +27,6 @@ export interface PayPalWebhookHandlerConfig {
   /** Millisecond ceiling for one notify-validate round trip. */
   readonly verifyTimeoutMs: number
   readonly maxBodyBytes: number
-}
-
-/** Whether Content-Type is form-encoded with optional UTF-8 charset. */
-function isFormEncodedContentType(value: string | undefined): boolean {
-  if (value === undefined) return false
-  const parts = value.split(';').map(part => part.trim())
-  const [mediaType, parameter, ...extra] = parts
-  if (mediaType?.toLowerCase() !== 'application/x-www-form-urlencoded') return false
-  if (parameter === undefined) return true
-  return extra.length === 0 && /^charset=(?:utf-8|"utf-8")$/i.test(parameter)
-}
-
-/** Send one empty or plain-text response exactly once. */
-function respond(response: ServerResponse, status: number, message?: string): void {
-  if (message === undefined) {
-    response.writeHead(status)
-    response.end()
-    return
-  }
-  response.writeHead(status, { 'content-type': 'text/plain; charset=utf-8' })
-  response.end(message)
 }
 
 /**
@@ -102,7 +83,7 @@ export function createPayPalWebhookHandler(
         response.setHeader('allow', 'POST')
         throw new WebhookHttpError(405, 'method not allowed')
       }
-      if (!isFormEncodedContentType(request.headers['content-type'])) {
+      if (!isWebhookContentType(request.headers['content-type'], 'application/x-www-form-urlencoded')) {
         throw new WebhookHttpError(415, 'content type must be application/x-www-form-urlencoded')
       }
       const body = await readBoundedUtf8Body(request, config.maxBodyBytes)
@@ -128,14 +109,14 @@ export function createPayPalWebhookHandler(
       }
       // PayPal IPN treats exactly HTTP 200 as the delivery ack; any other
       // status makes PayPal re-send the notification (escalating, days long).
-      respond(response, 200)
+      webhookRespond(response, 200)
     } catch (error: unknown) {
       if (error instanceof WebhookHttpError) {
-        respond(response, error.status, error.message)
+        webhookRespond(response, error.status, error.message)
         return
       }
       ctx.logger.warn('webhook-paypal: request failed')
-      respond(response, 503, 'webhook ingress is unavailable')
+      webhookRespond(response, 503, 'webhook ingress is unavailable')
     }
   }
 }
