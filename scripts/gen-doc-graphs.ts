@@ -636,7 +636,7 @@ const SERVICE_ROLES: ServiceRole[] = [
     pkg: 'webhook',
     title: 'Webhook rule runtime',
     mode: 'core',
-    consumers: ['webhook-github'],
+    consumers: ['webhook-github', 'webhook-paypal'],
     note: 'Provider adapters dispatch authenticated deliveries; trusted plugins register independent process-local rules, and the runtime turns non-null results into ordinary Workspace-backed Sessions without delivery or completion state.',
   },
   {

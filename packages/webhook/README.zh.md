@@ -26,6 +26,7 @@ Webhook 系列接收通过身份验证的提供方事件，并运行受信任的
 |---|---|---|
 | [`webhook/`](webhook/README.zh.md) | 规则注册表、回调生命周期与基于 Workspace 的 Session 创建 | `ctx.webhookRuntime` |
 | [`webhook-github/`](webhook-github/README.zh.md) | 签名 GitHub HTTP 适配器 | 消费 `ctx.webhookRuntime` 与 `ctx.webServer` |
+| [`webhook-paypal/`](webhook-paypal/README.zh.md) | PayPal IPN HTTP 适配器 | 消费 `ctx.webhookRuntime` 与 `ctx.webServer` |
 
 <a id="related-documentation"></a>
 ## 相关文档

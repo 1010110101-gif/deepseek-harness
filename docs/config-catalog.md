@@ -3369,6 +3369,30 @@ export interface Config {
 
 Source: [`packages/webhook/webhook-github/src/index.ts:17`](../packages/webhook/webhook-github/src/index.ts)
 
+<a id="deepseek-aidsh-webhook-paypal"></a>
+
+## `@deepseek-ai/dsh-webhook-paypal`
+
+Requires: `webServer` · `webhookRuntime`
+
+```ts config-catalog
+/** Required PayPal ingress configuration. */
+export interface Config {
+  /** Adapter instance name carried to rules. */
+  readonly source: string
+  /** Exact absolute route path. */
+  readonly path: string
+  /** Absolute `cmd=_notify-validate` endpoint; defaults to PayPal production. */
+  readonly verifyUrl?: string
+  /** Millisecond ceiling for one verify round trip; defaults to `DEFAULT_VERIFY_TIMEOUT_MS`. */
+  readonly verifyTimeoutMs?: number
+  /** Positive raw body ceiling in bytes. */
+  readonly maxBodyBytes: number
+}
+```
+
+Source: [`packages/webhook/webhook-paypal/src/index.ts:16`](../packages/webhook/webhook-paypal/src/index.ts)
+
 <a id="deepseek-aidsh-workflow-worker-thread"></a>
 
 ## `@deepseek-ai/dsh-workflow-worker-thread`
