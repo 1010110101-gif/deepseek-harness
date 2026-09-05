@@ -11,8 +11,8 @@ export const name = 'webhook-paypal-invariant'
 export const inject = ['invariants']
 
 /**
- * No runtime invariant: HMAC-SHA256 verification and input validation occur at the exact
- * HTTP operation; dsh-host-webserver owns route/disposer symmetry.
+ * No runtime invariant: `cmd=_notify-validate` verification and input validation
+ * occur at the exact HTTP operation; dsh-host-webserver owns route/disposer symmetry.
  */
 const install: InvariantInstaller = () => {}
 

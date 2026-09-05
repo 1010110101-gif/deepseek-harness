@@ -1,6 +1,6 @@
 {
   "name": "@deepseek-ai/dsh-webhook-paypal",
-  "description": "Signed PayPal IPN HTTP webhook adapter for the DeepSeek Harness webhook runtime",
+  "description": "PayPal IPN HTTP webhook adapter for the DeepSeek Harness webhook runtime",
   "version": "0.1.2-alpha.1",
   "publishConfig": {
     "access": "public"
@@ -38,10 +38,8 @@
   "license": "MIT",
   "peerDependencies": {
     "@deepseek-ai/cordis": "workspace:^",
-    "@deepseek-ai/dsh-credentials": "workspace:^",
     "@deepseek-ai/dsh-host-webserver": "workspace:^",
     "@deepseek-ai/dsh-invariants": "workspace:^",
-    "@deepseek-ai/dsh-session": "workspace:^",
     "@deepseek-ai/dsh-webhook": "workspace:^"
   },
   "dependencies": {
@@ -51,10 +49,9 @@
     "@deepseek-ai/cordis": "workspace:^",
     "@deepseek-ai/cordis-plugin-include": "workspace:^",
     "@deepseek-ai/cordis-plugin-loader": "workspace:^",
-    "@deepseek-ai/dsh-credentials": "workspace:^",
     "@deepseek-ai/dsh-host-webserver": "workspace:^",
     "@deepseek-ai/dsh-invariants": "workspace:^",
-    "@deepseek-ai/dsh-session": "workspace:^",
-    "@deepseek-ai/dsh-webhook": "workspace:^"
+    "@deepseek-ai/dsh-webhook": "workspace:^",
+    "@deepseek-ai/schemastery": "workspace:^"
   }
 }

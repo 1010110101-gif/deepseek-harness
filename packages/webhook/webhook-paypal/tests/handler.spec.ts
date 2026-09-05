@@ -1,114 +1,231 @@
-/** Unit tests for PayPal IPN webhook handler and signature verification. */
+/** Unit tests for PayPal IPN handler verification, parsing, and dispatch. */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import * as crypto from 'node:crypto'
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import type { Context } from '@deepseek-ai/cordis'
-import { credentialRef } from '@deepseek-ai/dsh-credentials'
-import { createPayPalWebhookHandler } from '../src/handler.ts'
-import type { PayPalWebhookHandlerConfig } from '../src/handler.ts'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createPayPalWebhookHandler, notifyValidateBody } from '../src/handler.ts'
 
-describe('PayPal webhook handler', () => {
-  const mockCert = 'test-paypal-cert'
-  const mockSource = 'primary-paypal'
+const servers: Server[] = []
 
-  let mockCtx: { credentials: unknown; webhookRuntime: unknown; logger: unknown }
-  let mockRequest: { method: string; headers: unknown; complete: boolean; [Symbol.asyncIterator]: unknown }
-  let mockResponse: { writeHead: unknown; end: unknown; setHeader: unknown }
-  let handler: unknown
+afterEach(async () => {
+  await Promise.all(servers.splice(0).map(server => new Promise<void>(resolve => server.close(() => { resolve() }))))
+})
 
-  beforeEach(() => {
-    mockCtx = {
-      credentials: {
-        resolve: vi.fn().mockResolvedValue({ value: mockCert }),
+/** One fake context for dispatch and warning observation. */
+function fakeContext(): { ctx: Context; dispatch: ReturnType<typeof vi.fn>; warnings: ReturnType<typeof vi.fn> } {
+  const dispatch = vi.fn()
+  const warnings = vi.fn()
+  return {
+    ctx: {
+      webhookRuntime: { dispatch },
+      logger: { warn: warnings },
+    } as unknown as Context,
+    dispatch,
+    warnings,
+  }
+}
+
+/** Fake PayPal verification endpoint recording round-trip requests. */
+async function startVerifier(
+  reply: string,
+  status = 200,
+  replyDelayMs = 0,
+): Promise<{ url: string; bodies: string[]; contentTypes: string[] }> {
+  const bodies: string[] = []
+  const contentTypes: string[] = []
+  const server = createServer((request, response) => {
+    contentTypes.push(request.headers['content-type'] ?? '')
+    let body = ''
+    request.on('data', (chunk: Buffer) => { body += String(chunk) })
+    request.on('end', () => {
+      bodies.push(body)
+      const replyTo = (): void => {
+        // The client may have aborted on its own timeout; never write to a dead socket.
+        if (response.destroyed) return
+        response.writeHead(status, { 'content-type': 'text/plain' })
+        response.end(reply)
+      }
+      if (replyDelayMs === 0) replyTo()
+      else setTimeout(replyTo, replyDelayMs)
+    })
+  })
+  servers.push(server)
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+  const port = (server.address() as AddressInfo).port
+  return { url: `http://127.0.0.1:${String(port)}`, bodies, contentTypes }
+}
+
+/** Start a real Node server around the package-owned route handler. */
+async function serve(ctx: Context, verifyUrl: string, maxBodyBytes = 65536, verifyTimeoutMs = 10_000): Promise<string> {
+  const handler = createPayPalWebhookHandler(ctx, { source: 'primary', verifyUrl, verifyTimeoutMs, maxBodyBytes })
+  const server = createServer((request, response) => { void handler(request, response) })
+  servers.push(server)
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+  const port = (server.address() as AddressInfo).port
+  return `http://127.0.0.1:${String(port)}`
+}
+
+/** One PayPal IPN-shaped form-encoded message (charset field included). */
+const IPN_BODY = [
+  'txn_type=web_accept',
+  'payment_status=Completed',
+  'txn_id=TEST123',
+  'receiver_email=merchant%40example.com',
+  'payer_email=buyer%40example.com',
+  'mc_gross=19.99',
+  'mc_currency=USD',
+  'charset=windows-1252',
+].join('&')
+
+/** Send one form-encoded request to the adapter. */
+async function post(
+  base: string,
+  body: string,
+  options: { contentType?: string; method?: string } = {},
+): Promise<Response> {
+  return await fetch(base, {
+    method: options.method ?? 'POST',
+    headers: { 'content-type': options.contentType ?? 'application/x-www-form-urlencoded' },
+    ...(options.method === 'GET' ? {} : { body }),
+  })
+}
+
+describe('PayPal webhook HTTP handler', () => {
+  it('verifies via the notify-validate round trip, projects, dispatches, and acks 200', async () => {
+    const fake = fakeContext()
+    const verifier = await startVerifier('VERIFIED\n')
+    const base = await serve(fake.ctx, verifier.url)
+    const response = await post(base, IPN_BODY)
+    expect(response.status).toBe(200)
+    expect(await response.text()).toBe('')
+    expect(verifier.bodies).toEqual([notifyValidateBody(IPN_BODY)])
+    expect(verifier.contentTypes[0]).toBe('application/x-www-form-urlencoded')
+    expect(fake.dispatch).toHaveBeenCalledOnce()
+    const dispatched: unknown = fake.dispatch.mock.calls[0]?.[0]
+    expect(dispatched).toMatchObject({
+      kind: 'paypal',
+      source: 'primary',
+      deliveryId: 'TEST123',
+      event: {
+        name: 'web_accept',
+        payload: {
+          txn_type: 'web_accept',
+          payment_status: 'Completed',
+          txn_id: 'TEST123',
+          receiver_email: 'merchant@example.com',
+          mc_gross: '19.99',
+          charset: 'windows-1252',
+        },
       },
-      webhookRuntime: {
-        dispatch: vi.fn(),
-      },
-      logger: {
-        warn: vi.fn(),
-      },
-    }
-
-    mockRequest = {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/x-www-form-urlencoded',
-        'content-length': '0',
-        headersDistinct: {},
-      },
-      complete: true,
-      [Symbol.asyncIterator]: vi.fn(),
-    }
-
-    mockResponse = {
-      writeHead: vi.fn(),
-      end: vi.fn(),
-      setHeader: vi.fn(),
-    }
-
-    const config: PayPalWebhookHandlerConfig = {
-      source: mockSource,
-      secretEnv: credentialRef('PAYPAL_SECRET'),
-      maxBodyBytes: 65536,
-    }
-
-    handler = createPayPalWebhookHandler(mockCtx as unknown as Context, config)
+    })
+    expect(typeof (dispatched as { receivedAt?: unknown }).receivedAt).toBe('number')
   })
 
-  it('rejects non-POST requests', async () => {
-    mockRequest.method = 'GET'
-    await handler(mockRequest, mockResponse)
-    expect(mockResponse.writeHead).toHaveBeenCalledWith(405)
+  it('accepts a form content type with a UTF-8 charset parameter', async () => {
+    const fake = fakeContext()
+    const verifier = await startVerifier('VERIFIED')
+    const base = await serve(fake.ctx, verifier.url)
+    const response = await post(base, IPN_BODY, { contentType: 'application/x-www-form-urlencoded; charset=utf-8' })
+    expect(response.status).toBe(200)
+    expect(fake.dispatch).toHaveBeenCalledOnce()
   })
 
-  it('rejects missing Content-Type header', async () => {
-    mockRequest.headers['content-type'] = undefined
-    mockRequest[Symbol.asyncIterator] = async function* () {
-      yield Buffer.from('')
-    }
-    await handler(mockRequest, mockResponse)
-    expect(mockResponse.writeHead).toHaveBeenCalledWith(415)
+  it('rejects an INVALID verification reply with 401 before dispatch', async () => {
+    const fake = fakeContext()
+    const verifier = await startVerifier('INVALID')
+    const base = await serve(fake.ctx, verifier.url)
+    const response = await post(base, IPN_BODY)
+    expect(response.status).toBe(401)
+    expect(fake.dispatch).not.toHaveBeenCalled()
   })
 
-  it('rejects invalid signature', async () => {
-    const formData = 'txn_type=web_accept&txn_id=12345&sig=invalidsig'
-    mockRequest[Symbol.asyncIterator] = async function* () {
-      yield Buffer.from(formData)
-    }
-    await handler(mockRequest, mockResponse)
-    expect(mockResponse.writeHead).toHaveBeenCalledWith(401)
+  it('answers 503 when the verification endpoint fails so PayPal retries', async () => {
+    const fake = fakeContext()
+    const verifier = await startVerifier('', 500)
+    const base = await serve(fake.ctx, verifier.url)
+    const response = await post(base, IPN_BODY)
+    expect(response.status).toBe(503)
+    expect(fake.dispatch).not.toHaveBeenCalled()
+    expect(fake.warnings).toHaveBeenCalledTimes(1)
   })
 
-  it('accepts valid IPN payload', async () => {
-    // Construct a valid payload with proper signature
-    const params = new URLSearchParams()
-    params.append('txn_type', 'web_accept')
-    params.append('txn_id', '12345')
-    params.append('receiver_email', 'merchant@example.com')
-    params.append('payer_email', 'buyer@example.com')
+  it('answers 503 when the verification round trip exceeds the timeout so PayPal retries', async () => {
+    const fake = fakeContext()
+    const verifier = await startVerifier('VERIFIED', 200, 5_000)
+    const base = await serve(fake.ctx, verifier.url, 65536, 100)
+    const response = await post(base, IPN_BODY)
+    expect(response.status).toBe(503)
+    expect(fake.dispatch).not.toHaveBeenCalled()
+    expect(fake.warnings).toHaveBeenCalledTimes(1)
+  }, 10_000)
 
-    // Sort for signature computation (PayPal requirement)
-    const forSig = new URLSearchParams()
-    const keys = Array.from(params.keys()).sort()
-    for (const key of keys) {
-      forSig.append(key, params.get(key) ?? '')
-    }
+  it.each([
+    ['method', { method: 'GET' }, 405],
+    ['media type', { contentType: 'text/plain' }, 415],
+    ['charset parameter', { contentType: 'application/x-www-form-urlencoded; charset=windows-1252' }, 415],
+    ['extra parameters', { contentType: 'application/x-www-form-urlencoded; charset=utf-8; boundary=x' }, 415],
+  ] as const)('rejects an invalid %s before verification or dispatch', async (_label, options, status) => {
+    const fake = fakeContext()
+    const verifier = await startVerifier('VERIFIED')
+    const base = await serve(fake.ctx, verifier.url)
+    const response = await post(base, IPN_BODY, options)
+    expect(response.status).toBe(status)
+    if (status === 405) expect(response.headers.get('allow')).toBe('POST')
+    expect(verifier.bodies).toHaveLength(0)
+    expect(fake.dispatch).not.toHaveBeenCalled()
+  })
 
-    const signature = crypto
-      .createHmac('sha256', mockCert)
-      .update(forSig.toString())
-      .digest('base64')
+  it('rejects a missing Content-Type before body processing', async () => {
+    const fake = fakeContext()
+    const handler = createPayPalWebhookHandler(fake.ctx, {
+      source: 'primary',
+      verifyUrl: 'http://127.0.0.1:9',
+      verifyTimeoutMs: 10_000,
+      maxBodyBytes: 1024,
+    })
+    const request = { method: 'POST', headers: {} } as unknown as IncomingMessage
+    const writeHead = vi.fn()
+    const response = { setHeader: vi.fn(), writeHead, end: vi.fn() } as unknown as ServerResponse
+    await handler(request, response)
+    expect(writeHead).toHaveBeenCalledWith(415, expect.any(Object))
+    expect(fake.dispatch).not.toHaveBeenCalled()
+  })
 
-    params.append('sig', signature)
-    const formData = params.toString()
+  it('falls back to unknown names for an IPN without txn_type or txn_id', async () => {
+    const fake = fakeContext()
+    const verifier = await startVerifier('VERIFIED')
+    const base = await serve(fake.ctx, verifier.url)
+    const response = await post(base, 'payment_status=Completed&receiver_email=merchant%40example.com')
+    expect(response.status).toBe(200)
+    const dispatched: unknown = fake.dispatch.mock.calls[0]?.[0]
+    expect(dispatched).toMatchObject({
+      event: { name: 'unknown' },
+    })
+    expect(String((dispatched as { deliveryId?: unknown }).deliveryId)).toMatch(/^ipn-\d+$/)
+  })
 
-    mockRequest[Symbol.asyncIterator] = async function* () {
-      yield Buffer.from(formData)
-    }
+  it('rejects a declared body over the configured cap', async () => {
+    const fake = fakeContext()
+    const verifier = await startVerifier('VERIFIED')
+    const base = await serve(fake.ctx, verifier.url, 2)
+    const response = await post(base, 'a=1')
+    expect(response.status).toBe(413)
+    expect(fake.dispatch).not.toHaveBeenCalled()
+  })
 
-    await handler(mockRequest, mockResponse)
+  it('answers 503 when the webhook runtime is unavailable', async () => {
+    const fake = fakeContext()
+    fake.dispatch.mockImplementation(() => { throw new Error('closing') })
+    const verifier = await startVerifier('VERIFIED')
+    const base = await serve(fake.ctx, verifier.url)
+    expect((await post(base, IPN_BODY)).status).toBe(503)
+    expect(fake.warnings).toHaveBeenCalledTimes(1)
+  })
 
-    expect(mockResponse.writeHead).toHaveBeenCalledWith(202)
-    expect(mockCtx.webhookRuntime.dispatch).toHaveBeenCalled()
+  it('builds the notify-validate round-trip body exactly', () => {
+    expect(notifyValidateBody('a=1')).toBe('a=1&cmd=_notify-validate')
+    expect(notifyValidateBody('a=1&')).toBe('a=1&cmd=_notify-validate')
+    expect(notifyValidateBody('')).toBe('cmd=_notify-validate')
   })
 })

@@ -20,12 +20,6 @@
       "path": "../../../vendor/schemastery"
     },
     {
-      "path": "../../credentials/credentials"
-    },
-    {
-      "path": "../../core/session"
-    },
-    {
       "path": "../../host/webserver"
     },
     {

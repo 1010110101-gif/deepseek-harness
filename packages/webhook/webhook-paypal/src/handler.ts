@@ -1,10 +1,7 @@
-/** PayPal IPN HTTP authentication, parsing, and fire-and-forget dispatch. */
+/** PayPal IPN HTTP verification, parsing, and fire-and-forget dispatch. */
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { ServerResponse } from 'node:http'
-import * as crypto from 'node:crypto'
-import type { CredentialRef } from '@deepseek-ai/dsh-credentials'
-import { snapshotJsonValue } from '@deepseek-ai/dsh-session'
 import {
   WebhookDeliveryId,
   WebhookSourceId,
@@ -14,10 +11,19 @@ import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { readBoundedUtf8Body, WebhookHttpError } from './body.ts'
 import type { PayPalIpnPayload } from './types.ts'
 
+/** PayPal production `cmd=_notify-validate` endpoint; the sandbox overrides it in config. */
+export const DEFAULT_VERIFY_URL = 'https://ipnpb.paypal.com/cgi-bin/webscr'
+
+/** Default ceiling for one notify-validate round trip, in milliseconds. */
+export const DEFAULT_VERIFY_TIMEOUT_MS = 10_000
+
 /** Handler values validated once at plugin load. */
 export interface PayPalWebhookHandlerConfig {
   readonly source: string
-  readonly secretEnv: CredentialRef
+  /** Absolute URL that answers the `cmd=_notify-validate` round trip. */
+  readonly verifyUrl: string
+  /** Millisecond ceiling for one notify-validate round trip. */
+  readonly verifyTimeoutMs: number
   readonly maxBodyBytes: number
 }
 
@@ -43,67 +49,48 @@ function respond(response: ServerResponse, status: number, message?: string): vo
 }
 
 /**
- * Verify PayPal IPN signature using HMAC-SHA256.
- * PayPal includes a 'sig' parameter in the payload; we rebuild the query string
- * in the exact order received and verify the HMAC-SHA256 matches.
- * @param body - raw request body (form-encoded)
- * @param paypalCert - PayPal API signature certificate/secret
- * @returns true if signature is valid
+ * Build the `cmd=_notify-validate` round-trip body: the exact received IPN
+ * message with the validation command appended (PayPal requirement).
  */
-function verifyPayPalSignature(body: string, paypalCert: string): boolean {
-  try {
-    const params = new URLSearchParams(body)
-    const expectedSig = params.get('sig')
-    if (!expectedSig) return false
-
-    // Remove the signature from the parameters before computing the hash
-    params.delete('sig')
-
-    // Sort parameters alphabetically (PayPal requirement)
-    const sortedParams = new URLSearchParams()
-    const keys = Array.from(params.keys()).sort()
-    for (const key of keys) {
-      sortedParams.append(key, params.get(key) ?? '')
-    }
-
-    // Compute HMAC-SHA256
-    const computed = crypto
-      .createHmac('sha256', paypalCert)
-      .update(sortedParams.toString())
-      .digest('base64')
-
-    return expectedSig === computed
-  } catch {
-    return false
-  }
+export function notifyValidateBody(body: string): string {
+  if (body === '') return 'cmd=_notify-validate'
+  return `${body}${body.endsWith('&') ? '' : '&'}cmd=_notify-validate`
 }
 
 /**
- * Parse form-encoded PayPal IPN data into a JSON object.
- * @param body - raw form-encoded request body
- * @returns parsed lossless JSON object
+ * POST the raw IPN body back to PayPal for `cmd=_notify-validate` verification.
+ * A non-200 reply or a round trip beyond `verifyTimeoutMs` is a verification
+ * failure the caller answers 5xx for, so PayPal keeps retrying the notification.
+ * @param body - exact form-encoded IPN message received.
+ * @param verifyUrl - PayPal verification endpoint.
+ * @param verifyTimeoutMs - abort ceiling for the round trip.
+ * @returns the trimmed verification reply (expected `VERIFIED` or `INVALID`).
  */
+async function verifyIpn(body: string, verifyUrl: string, verifyTimeoutMs: number): Promise<string> {
+  const response = await fetch(verifyUrl, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: notifyValidateBody(body),
+    signal: AbortSignal.timeout(verifyTimeoutMs),
+  })
+  if (!response.ok) throw new Error('PayPal IPN verification endpoint returned an error')
+  return (await response.text()).trim()
+}
+
+/** Parse form-encoded IPN data into a string-only object, exactly as received. */
 function parsePayload(body: string): PayPalIpnPayload {
-  try {
-    const params = new URLSearchParams(body)
-    const obj: Record<string, unknown> = {}
-    for (const [key, value] of params.entries()) {
-      obj[key] = value
-    }
-    const snapshot = snapshotJsonValue(obj)
-    if (snapshot === undefined) throw new WebhookHttpError(400, 'PayPal IPN payload is not lossless JSON')
-    return snapshot as PayPalIpnPayload
-  } catch (error: unknown) {
-    if (error instanceof WebhookHttpError) throw error
-    throw new WebhookHttpError(400, 'request body is not valid form-encoded data')
-  }
+  const params = new URLSearchParams(body)
+  const obj: Record<string, string> = {}
+  for (const [key, value] of params.entries()) obj[key] = value
+  return obj
 }
 
 /**
  * Create one exact-route PayPal IPN handler.
- * @param ctx - adapter context carrying credentials and webhook runtime.
- * @param config - validated source, credential reference, and body ceiling.
- * @returns an HTTP handler that answers after in-memory dispatch, never rule settlement.
+ * @param ctx - adapter context carrying the webhook runtime.
+ * @param config - validated source, verification endpoint, and body ceiling.
+ * @returns an HTTP handler that verifies via PayPal's notify-validate round trip
+ *   and answers `200` after in-memory dispatch, never rule settlement.
  */
 export function createPayPalWebhookHandler(
   ctx: Context,
@@ -119,12 +106,9 @@ export function createPayPalWebhookHandler(
         throw new WebhookHttpError(415, 'content type must be application/x-www-form-urlencoded')
       }
       const body = await readBoundedUtf8Body(request, config.maxBodyBytes)
-      const credential = await ctx.credentials.resolve(config.secretEnv)
-      if (credential === undefined || credential.value === '') {
-        throw new WebhookHttpError(503, 'PayPal certificate/secret is unavailable')
-      }
-      if (!verifyPayPalSignature(body, credential.value)) {
-        throw new WebhookHttpError(401, 'invalid PayPal signature')
+      const verification = await verifyIpn(body, config.verifyUrl, config.verifyTimeoutMs)
+      if (verification !== 'VERIFIED') {
+        throw new WebhookHttpError(401, 'PayPal IPN verification did not return VERIFIED')
       }
       const payload = parsePayload(body)
       const txnType = typeof payload.txn_type === 'string' ? payload.txn_type : 'unknown'
@@ -142,7 +126,9 @@ export function createPayPalWebhookHandler(
         ctx.logger.warn('webhook-paypal: dispatch unavailable')
         throw new WebhookHttpError(503, 'webhook runtime is unavailable')
       }
-      respond(response, 202)
+      // PayPal IPN treats exactly HTTP 200 as the delivery ack; any other
+      // status makes PayPal re-send the notification (escalating, days long).
+      respond(response, 200)
     } catch (error: unknown) {
       if (error instanceof WebhookHttpError) {
         respond(response, error.status, error.message)

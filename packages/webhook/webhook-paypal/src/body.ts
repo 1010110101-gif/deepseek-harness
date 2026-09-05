@@ -1,4 +1,4 @@
-/** Bounded form-encoded HTTP body intake for PayPal IPN signature verification. */
+/** Bounded form-encoded HTTP body intake for PayPal IPN verification. */
 
 import type { IncomingMessage } from 'node:http'
 

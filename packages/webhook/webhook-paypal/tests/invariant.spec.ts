@@ -1,28 +1,13 @@
-/** Unit tests for PayPal webhook adapter invariant companion. */
+import { Context } from '@deepseek-ai/cordis'
+import InvariantRegistry from '@deepseek-ai/dsh-invariants'
+import { describe, expect, it } from 'vitest'
+import * as PayPalInvariant from '../src/invariant.ts'
 
-import { describe, it, expect, vi } from 'vitest'
-import type { Context } from '@deepseek-ai/cordis'
-import { name, inject, apply } from '../src/invariant.ts'
-
-describe('webhook-paypal invariant companion', () => {
-  it('exports correct plugin metadata', () => {
-    expect(name).toBe('webhook-paypal-invariant')
-    expect(inject).toEqual(['invariants'])
-  })
-
-  it('registers empty invariant with registry', async () => {
-    const mockCtx = {
-      invariants: {
-        register: vi.fn().mockResolvedValue(() => {}),
-      },
-    }
-
-    const disposer = await apply(mockCtx as unknown as Context)
-
-    expect(mockCtx.invariants.register).toHaveBeenCalledWith(
-      '@deepseek-ai/dsh-webhook-paypal',
-      expect.any(Function),
-    )
-    expect(typeof disposer).toBe('function')
+describe('PayPal webhook invariant companion', () => {
+  it('registers its explained empty installer', async () => {
+    const ctx = new Context()
+    await ctx.plugin(InvariantRegistry)
+    await expect(ctx.plugin(PayPalInvariant)).resolves.toBeDefined()
+    await ctx.fiber.dispose()
   })
 })

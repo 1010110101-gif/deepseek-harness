@@ -31,7 +31,7 @@ export type PayPalIpnPayload = Record<string, unknown> & {
 export interface PayPalWebhookEvent {
   /** Transaction type from the IPN payload such as `web_accept` or `subscr_payment`. */
   readonly name: string
-  /** Signed form-encoded object exactly as parsed from the request body. */
+  /** Form-encoded object exactly as parsed from the request body. */
   readonly payload: PayPalIpnPayload
 }
 
