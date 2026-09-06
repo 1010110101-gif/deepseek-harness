@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import config from './config.json' with { type: 'json' }
 import {
   countVisibleUnits,
+  resolveRepository,
   nextResolvingIssueStatus,
   parseReferences,
   retainIssueReferences,
@@ -61,6 +63,34 @@ const reviewedPull = (labels) => ({
   labels,
   references: { all: [2], resolving: [], related: [2] },
   issues: new Map([[2, { priority: null }]]),
+})
+
+test('resolves the repository from GITHUB_REPOSITORY', () => {
+  assert.deepEqual(
+    resolveRepository({ githubRepository: '1010110101-gif/deepseek-harness' }),
+    { organization: '1010110101-gif', repository: 'deepseek-harness' },
+  )
+})
+
+test('falls back to the configured repository without GITHUB_REPOSITORY', () => {
+  const previous = process.env.GITHUB_REPOSITORY
+  delete process.env.GITHUB_REPOSITORY
+  try {
+    assert.deepEqual(resolveRepository(), {
+      organization: config.organization,
+      repository: config.repository,
+    })
+  } finally {
+    if (previous === undefined) delete process.env.GITHUB_REPOSITORY
+    else process.env.GITHUB_REPOSITORY = previous
+  }
+})
+
+test('falls back to the configured repository on malformed GITHUB_REPOSITORY', () => {
+  const expected = { organization: config.organization, repository: config.repository }
+  for (const malformed of ['', 'just-a-name', 'owner/', '/repo', 'a/b/c', 'owner/na me', '-owner/repo']) {
+    assert.deepEqual(resolveRepository({ githubRepository: malformed }), expected, malformed)
+  }
 })
 
 test('counts only text outside details', () => {
